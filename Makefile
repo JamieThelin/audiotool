@@ -1,2 +1,4 @@
 audiotool: audiotool.c
-	gcc audiotool.c -Wall -oaudiotool
+	gcc audiotool.c -g -Wall -oout/audiotool
+clean:
+	rm out/*
