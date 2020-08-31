@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -6,23 +7,23 @@
 struct wavFileInfo
 {
     /* RIFF chunk descriptor */
-    unsigned int chunkID;
-    unsigned int chunkSize;
-    unsigned int format;
+    uint32_t chunkID;
+    uint32_t chunkSize;
+    uint32_t format;
     
     /* fmt sub-chunk */
-    unsigned int subchunk1ID;
-    unsigned int subchunk1Size;
-    unsigned int audioFormat;
-    unsigned int numChannels;
-    unsigned int sampleRate;
-    unsigned int byteRate;
-    unsigned int blockAlign;
-    unsigned int bitsPerSample;
+    uint32_t subchunk1ID;
+    uint32_t subchunk1Size;
+    uint16_t audioFormat;
+    uint16_t numChannels;
+    uint32_t sampleRate;
+    uint32_t byteRate;
+    uint16_t blockAlign;
+    uint16_t bitsPerSample;
 
     /* data sub-chunk */
-    unsigned int subchunk2ID;
-    unsigned int subchunk2Size;
+    uint32_t subchunk2ID;
+    uint32_t subchunk2Size;
     /* audio data... */
 };
 
@@ -61,23 +62,19 @@ void releaseFilePtr(FILE** f)
     }
 }
 
-void littleEndianBufToInt(const char unsigned input[], unsigned int* output, size_t size)
+void littleEndianBufToInt(const uint8_t input[], uintmax_t* output, size_t size)
 {
     *output = 0;
-    for (int i = 0; i < size; i++)
+    for (size_t i = 0; i < size; i++)
     {
         *output |= input[i] << 8;
     }
 }
 
-/* ====================================================== */
-/* ===== TODO: fix little endian memory corruption! ===== */
-/* ====================================================== */
-
-unsigned int bigEndianBufToInt(const unsigned char input[], size_t size)
+uintmax_t bigEndianBufToInt(const uint8_t input[], size_t size)
 {
-    unsigned int output = 0;
-    for (int i = 0; i < size; i++)
+    uintmax_t output = 0;
+    for (size_t i = 0; i < size; i++)
     {
         output <<= 8;
         output |= input[i];
@@ -85,10 +82,10 @@ unsigned int bigEndianBufToInt(const unsigned char input[], size_t size)
     return output;
 }
 
-int readIntFromBuf(const unsigned char buf[], unsigned int* output, int* offset, size_t n, int bigEndian)
+size_t readIntFromBuf(const uint8_t buf[], uintmax_t* output, uintmax_t* offset, size_t n, int bigEndian)
 {
-    int i;
-    unsigned char tmp[n];
+    size_t i;
+    uint8_t tmp[n];
     for (i = 0; i < n; i++)
     {
         tmp[i] = buf[*offset + (bigEndian ? i : n - i - 1)];
@@ -101,10 +98,52 @@ int readIntFromBuf(const unsigned char buf[], unsigned int* output, int* offset,
     return i;
 }
 
+size_t readSignedIntFromBuf(const uint8_t buf[], intmax_t* output, uintmax_t* offset, size_t n, int bigEndian)
+{
+    size_t i;
+    uint8_t tmp[n];
+    for (i = 0; i < n; i++)
+    {
+        tmp[i] = buf[*offset + (bigEndian ? i : n - i - 1)];
+    }
+    *offset += n;
+
+
+    *output = ((intmax_t) (bigEndianBufToInt(tmp, n)));
+
+    return i;
+}
+
+int writeWavSignal( struct wavFileInfo * wavHeaderInfo, FILE * wavFile, uintmax_t * globalOffset )
+{
+    uintmax_t * offset = malloc(sizeof(int));
+    uintmax_t samplesToPrint = ( wavHeaderInfo->subchunk2Size / ( wavHeaderInfo->bitsPerSample / 8 ) ) * wavHeaderInfo->numChannels;
+
+    uint8_t sampleBuf[wavHeaderInfo->subchunk2Size];
+
+    fseek(wavFile, *globalOffset, SEEK_SET);
+    fread(sampleBuf, sizeof(int8_t), sizeof(sampleBuf), wavFile);
+    *offset = 0;
+
+    printf("samples:\n");
+
+    for (uintmax_t sample = 0; sample < samplesToPrint; sample++)
+    {
+        for (uint16_t channel = 0; channel < wavHeaderInfo->numChannels; channel++)
+        {
+            intmax_t sampleVal = 0;
+            readSignedIntFromBuf(sampleBuf, &sampleVal, offset, wavHeaderInfo->bitsPerSample/8, 0);
+            printf("%d\n", (int16_t)sampleVal);
+        }
+    }
+
+    return 1;
+}
+
 int decodeWav(const char* filename)
 {
     FILE * wavFile = NULL;
-    unsigned char wavHeader[44];
+    uint8_t wavHeaderBuf[44];
     struct wavFileInfo* wavHeaderInfo = calloc(sizeof(struct wavFileInfo), 1);
 
     if (!getFilePtr(filename, &wavFile))
@@ -113,28 +152,29 @@ int decodeWav(const char* filename)
     }
 
     fseek(wavFile, 0, SEEK_SET);
-    fread(wavHeader, sizeof(char), sizeof(wavHeader), wavFile);
+    fread(wavHeaderBuf, sizeof(unsigned char), sizeof(wavHeaderBuf), wavFile);
 
-    int offset = 0;
+    uintmax_t offset = 0;
     /* RIFF chunk descriptor */
-    readIntFromBuf(wavHeader, &wavHeaderInfo->chunkID,       &offset, 4, 1);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->chunkSize,     &offset, 4, 0);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->format,        &offset, 4, 1);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->chunkID),       &offset, 4, 1);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->chunkSize),     &offset, 4, 0);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->format),        &offset, 4, 1);
 
     /* fmt sub-chunk */
-    readIntFromBuf(wavHeader, &wavHeaderInfo->subchunk1ID,   &offset, 4, 1);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->subchunk1Size, &offset, 4, 0);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->audioFormat,   &offset, 2, 0);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->numChannels,   &offset, 2, 0);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->sampleRate,    &offset, 4, 0);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->byteRate,      &offset, 4, 0);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->blockAlign,    &offset, 2, 0);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->bitsPerSample, &offset, 2, 0);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->subchunk1ID),   &offset, 4, 1);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->subchunk1Size), &offset, 4, 0);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->audioFormat),   &offset, 2, 0);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->numChannels),   &offset, 2, 0);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->sampleRate),    &offset, 4, 0);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->byteRate),      &offset, 4, 0);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->blockAlign),    &offset, 2, 0);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->bitsPerSample), &offset, 2, 0);
 
     /* data sub-chunk */
-    readIntFromBuf(wavHeader, &wavHeaderInfo->subchunk2ID,   &offset, 4, 1);
-    readIntFromBuf(wavHeader, &wavHeaderInfo->subchunk2Size, &offset, 4, 0);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->subchunk2ID),   &offset, 4, 1);
+    readIntFromBuf(wavHeaderBuf, ((uintmax_t*)&wavHeaderInfo->subchunk2Size), &offset, 4, 0);
     
+    writeWavSignal(wavHeaderInfo, wavFile, &offset);
     
     free(wavHeaderInfo);
     releaseFilePtr(&wavFile);
@@ -194,6 +234,10 @@ int main(int argc, char** argv)
         usage();
         exit(1);
     }
+
+    /* ##################################################################### */
+    /* ######## TODO: add appropriate filetype conversion selection ######## */
+    /* ##################################################################### */
 
     decodeWav(filename);
 
